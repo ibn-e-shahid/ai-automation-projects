@@ -1,0 +1,306 @@
+# YouTube Shorts Automation Pipeline — Complete Documentation
+
+## Project Overview
+
+Yeh ek fully automated YouTube Shorts pipeline hai jo:
+1. RSS feed se latest news article uthata hai
+2. Claude AI se punchy script banata hai
+3. edge-tts se voiceover generate karta hai
+4. Pexels se stock video clips download karta hai
+5. moviepy se sab merge karta hai + PIL se captions burn karta hai
+6. YouTube pe automatically upload karta hai
+
+Trigger: n8n se — har 6 ghante scheduled, ya on-demand webhook se.
+
+---
+
+## System Architecture
+
+```
+n8n (localhost:5678)
+  ├── Schedule Trigger (har 6 ghante)
+  └── Webhook Trigger (on-demand)
+        ↓
+    Merge Node
+        ↓
+    HTTP Request Node
+        ↓
+ngrok (public URL → localhost:8000)
+        ↓
+FastAPI Server (localhost:8000) — server.py
+        ↓
+    run_all.py
+      ├── pipeline.py  (Phase 1-3: RSS + Script + Audio + Video)
+      └── merge_fixed.py  (Phase 4: Merge + Captions)
+      └── upload.py  (Phase 5: YouTube Upload)
+        ↓
+    final_short.mp4 → YouTube Shorts ✅
+```
+
+---
+
+## File Structure
+
+### Python Installation
+```
+D:\python.exe          — Python 3.14.7 executable
+D:\Lib\site-packages\  — All installed Python packages
+D:\Scripts\            — Python scripts folder
+```
+
+### Project Files (E Drive)
+```
+E:\shorts_pipeline\
+├── server.py          — FastAPI server (n8n se request receive karta hai)
+├── run_all.py         — Master script (pipeline + merge + upload chalaata hai)
+├── pipeline.py        — Phase 1-3: RSS fetch, Claude script, audio, video clips
+├── merge_fixed.py     — Phase 4: Video merge + PIL captions
+├── upload.py          — Phase 5: YouTube upload
+├── client_secrets.json — Google OAuth credentials (YouTube API)
+├── token.json         — Auto-generated after first YouTube auth (DO NOT DELETE)
+└── output\
+    └── YYYYMMDD_HHMMSS\   — Har run ka alag folder
+        ├── line_01.mp3    — Audio per line
+        ├── line_02.mp3
+        ├── ...
+        ├── clip_01.mp4    — Video clip per line
+        ├── clip_02.mp4
+        ├── ...
+        ├── final_short.mp4 — Final merged video
+        └── manifest.json   — Run ka poora record
+```
+
+---
+
+## API Keys & Credentials
+
+| Service | Key Location | Notes |
+|---|---|---|
+| Anthropic (Claude) | pipeline.py → ANTHROPIC_KEY | sk-ant-... |
+| Pexels | pipeline.py → PEXELS_KEY | Free, unlimited |
+| YouTube | client_secrets.json + token.json | OAuth, ek baar authenticate |
+| ngrok | Auto-saved in AppData | Free account |
+
+### pipeline.py CONFIG section
+```python
+RSS_URL       = "https://cointelegraph.com/rss"  # Change for different topics
+ANTHROPIC_KEY = "sk-ant-..."
+PEXELS_KEY    = "your-pexels-key"
+OUTPUT_DIR    = r"E:\shorts_pipeline\output"
+MAX_LINES     = 8      # Lines in script (8 lines ≈ 30-35 sec video)
+TTS_VOICE     = "en-US-AriaNeural"  # edge-tts voice
+```
+
+---
+
+## Tools & Libraries Used
+
+| Tool | Version | Purpose | Why |
+|---|---|---|---|
+| n8n | Latest | Workflow orchestrator | Schedule + Webhook triggers |
+| FastAPI + Uvicorn | 0.141.1 / 0.52.4 | Local HTTP server | n8n Execute Command available nahi tha |
+| ngrok | 3.39.9 | Public tunnel | n8n localhost access nahi kar sakta |
+| feedparser | 6.0.14 | RSS parsing | Article fetch karna |
+| anthropic | 1.2.0 | Claude API | Script generation |
+| edge-tts | 7.2.8 | Text to Speech | Free, unlimited, natural voice |
+| requests | 2.34.2 | HTTP calls | Pexels API video download |
+| moviepy | 2.1.2 | Video editing | Audio + video merge |
+| Pillow (PIL) | 11.3.0 | Image processing | Captions burn (TextClip reliable nahi tha) |
+| google-api-python-client | Latest | YouTube API | Video upload |
+| google-auth-oauthlib | Latest | OAuth flow | YouTube authentication |
+
+---
+
+## How to Start the System (Every Time)
+
+**3 CMD windows kholne hain:**
+
+### CMD 1 — n8n
+```
+n8n start
+```
+Browser mein jao: `http://localhost:5678`
+
+### CMD 2 — FastAPI Server
+```
+E:
+cd shorts_pipeline
+D:\python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+### CMD 3 — ngrok
+```
+"C:\Program Files\WindowsApps\ngrok.ngrok_3.39.9.0_x64__1g87z0zv29zzc\ngrok.exe" http 8000
+```
+Naya URL copy karo (e.g. `https://xxxx.ngrok-free.dev`)
+
+### CMD 4 — n8n HTTP Request node update karo
+n8n mein HTTP Request node ka URL update karo:
+```
+https://xxxx.ngrok-free.dev/run
+```
+
+**Note:** ngrok URL har baar badlta hai — restart ke baad n8n mein update karna hoga.
+
+---
+
+## n8n Workflow Structure
+
+```
+Workflow Name: yt shorts
+Status: Published
+
+Nodes:
+1. Webhook Trigger
+   - Method: GET
+   - Path: 0808e576-5644-450b-85bd-835281151a98
+   - Production URL: http://localhost:5678/webhook/0808e576-...
+
+2. Schedule Trigger
+   - Interval: Every 6 Hours
+   - Minute: 0
+
+3. Merge Node
+   - Mode: Append
+   - Connects both triggers
+
+4. HTTP Request Node
+   - Method: GET
+   - URL: https://xxxx.ngrok-free.dev/run
+   - Auth: None
+```
+
+---
+
+## Pipeline Phases Detail
+
+### Phase 1 — RSS → Claude Script
+**File:** `pipeline.py`
+- `feedparser` se RSS_URL parse karta hai
+- Latest article ka title + summary extract karta hai
+- Claude API ko prompt bhejta hai
+- Output: 8-line JSON script with keywords per line
+
+**Claude Prompt Logic:**
+- Line 1: Strong hook
+- Lines 2-7: Key points
+- Line 8: Call to action
+- Per line: 1-3 keywords for Pexels search
+
+### Phase 2 — Script → Audio
+**File:** `pipeline.py`
+- `edge-tts` se har line ki MP3 generate karta hai
+- Voice: en-US-AriaNeural
+- Output: `line_01.mp3` to `line_08.mp3`
+
+### Phase 3 — Keywords → Video Clips
+**File:** `pipeline.py`
+- Pexels API se har line ke keywords ke liye portrait video search
+- Fallback queries: agar specific keyword fail ho toh generic try karta hai
+- `random.choice` se same clip repeat nahi hota
+- Output: `clip_01.mp4` to `clip_08.mp4`
+
+### Phase 4 — Merge + Captions
+**File:** `merge_fixed.py`
+- Latest run folder dhundta hai
+- Har line ke liye: audio duration nikaalta hai, video clip crop karta hai (9:16 portrait), loop karta hai agar video choti ho
+- PIL se caption image banata hai (rounded dark background, white text, shadow)
+- moviepy se sab concatenate karta hai
+- Output: `final_short.mp4` (30-35 seconds)
+
+**Caption Style:**
+- Font size: 52px, Arial
+- Color: White with black shadow
+- Background: Semi-transparent rounded rectangle (rgba 0,0,0,160)
+- Position: Center of screen
+
+### Phase 5 — YouTube Upload
+**File:** `upload.py`
+- `token.json` se credentials load karta hai (ya first time OAuth flow)
+- `privacyStatus: private` pe upload karta hai (check ke baad public karo)
+- Title: Claude ka generated title
+- Description: Article title + hashtags
+- Category: News & Politics (25)
+- Output: Video ID + YouTube URL
+
+---
+
+## RSS Feed Options
+
+| Niche | RSS URL |
+|---|---|
+| Crypto | `https://cointelegraph.com/rss` |
+| Tech | `https://feeds.bbci.co.uk/news/technology/rss.xml` |
+| Business | `https://feeds.bbci.co.uk/news/business/rss.xml` |
+| World News | `https://feeds.bbci.co.uk/news/world/rss.xml` |
+| Pakistan | `https://www.geo.tv/rss/1` |
+| TechCrunch | `https://techcrunch.com/feed/` |
+| Finance | `https://feeds.finance.yahoo.com/rss/2.0/headline` |
+
+---
+
+## Known Issues & Solutions
+
+| Issue | Cause | Solution |
+|---|---|---|
+| ngrok URL changes on restart | Free ngrok plan | Update HTTP Request node URL manually |
+| Pexels sirf 3-5 clips milti hain | Keywords too specific | Fallback queries already implemented |
+| n8n Execute Command nahi hai | Cloud/newer n8n versions | FastAPI server use kiya |
+| TextClip captions nahi dikhte | moviepy 2.x font issue | PIL se captions banaye |
+| Windows Defender ngrok block karta hai | Tunneling tool | Microsoft Store wala ngrok use karo |
+| YouTube upload Access Blocked | OAuth test user nahi tha | Google Cloud Console mein email add karo |
+
+---
+
+## Possible Improvements
+
+1. **Duplicate check** — Google Sheets mein posted article URLs save karo taake same article dobara na aaye
+2. **Multiple RSS feeds** — Ek pipeline mein multiple feeds rotate karo
+3. **Branding** — Intro/outro video clips add karo (moviepy se)
+4. **Thumbnail generation** — PIL se custom thumbnail banao aur YouTube pe upload karo
+5. **Auto-public** — Upload ke baad video ko public karo (abhi private hai)
+6. **ngrok fixed URL** — Paid ngrok plan pe fixed URL milti hai ($8/month)
+7. **VPS deployment** — DigitalOcean pe deploy karo taake 24/7 chale bina local PC ke
+8. **Google Sheets logging** — n8n se har run ka log save karo
+9. **Multiple voices** — Alag topics ke liye alag TTS voices
+10. **Language support** — Urdu/Hindi RSS + TTS ke liye voice change karo
+
+---
+
+## Selling This Project
+
+### Pricing
+| Service | Pakistani Market | International |
+|---|---|---|
+| One-time setup | Rs. 20,000-50,000 | $200-500 |
+| Monthly retainer | Rs. 15,000-30,000 | $100-300/month |
+| Files only (Fiverr) | — | $50-150 |
+
+### Value Proposition
+- Manual video: 2-3 ghante per video
+- This pipeline: 5-10 minutes per video
+- Fully automated: 0 minutes (runs itself)
+
+### For Each Client
+- Unki apni API keys use karein
+- RSS feed unke niche ke mutabiq change karein
+- Unka YouTube channel credentials use karein
+- Setup remote (TeamViewer) ya onsite
+
+---
+
+## File Checklist for New Setup
+
+- [ ] Python 3.x install (D drive ya jahan bhi)
+- [ ] `pip install feedparser anthropic edge-tts requests fastapi uvicorn moviepy pillow google-auth-oauthlib google-auth-httplib2 google-api-python-client`
+- [ ] n8n install: `npm install -g n8n`
+- [ ] ngrok install (Microsoft Store se)
+- [ ] `E:\shorts_pipeline\` folder banana
+- [ ] `pipeline.py` — API keys fill karna
+- [ ] `merge_fixed.py` — copy karna
+- [ ] `upload.py` — copy karna
+- [ ] `server.py` — copy karna
+- [ ] `run_all.py` — copy karna
+- [ ] `client_secrets.json` — Google Cloud se download
+- [ ] n8n workflow import/recreate karna
+- [ ] Pehli baar `upload.py` run karke YouTube authenticate karna
